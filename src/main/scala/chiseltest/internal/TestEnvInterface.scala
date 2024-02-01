@@ -44,11 +44,8 @@ trait TestEnvInterface {
     */
   def signalExpectFailure(message: String): Unit = {
     val trace = new Throwable
-    val expectStackDepth = trace.getStackTrace.indexWhere(ste =>
-      ste.getClassName.startsWith(
-        "chiseltest.package$"
-      ) && (ste.getMethodName == "expect" || ste.getMethodName == "expectPartial")
-    )
+    val expectStackDepth =
+      trace.getStackTrace.indexWhere(ste => (ste.getMethodName == "expect" || ste.getMethodName == "expectPartial"))
     require(
       expectStackDepth != -1,
       s"Failed to find expect in stack trace:\r\n${trace.getStackTrace.mkString("\r\n")}"
