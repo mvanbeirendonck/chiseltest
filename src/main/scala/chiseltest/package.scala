@@ -290,16 +290,16 @@ package object chiseltest {
     }
   }
 
-  private object Utils {
+  object Utils {
     // Throw an exception if the value cannot fit into the signal.
-    def ensureFits(signal: Bool, value: BigInt): Unit = {
+    private[chiseltest] def ensureFits(signal: Bool, value: BigInt): Unit = {
       if (!(value == 0 || value == 1)) {
         throw new ChiselException(s"Value $value does not fit into the range of $signal (false/0 ... true/1)")
       }
     }
 
     // Throw an exception if the value cannot fit into the signal.
-    def ensureFits(signal: UInt, value: BigInt): Unit = {
+    private[chiseltest] def ensureFits(signal: UInt, value: BigInt): Unit = {
       signal.widthOption match {
         case Some(w) => ensureInRange(signal, value, 0, (BigInt(1) << w) - 1)
         case _       => // ignore
@@ -307,7 +307,7 @@ package object chiseltest {
     }
 
     // Throw an exception if the value cannot fit into the signal.
-    def ensureFits(signal: SInt, value: BigInt): Unit = {
+    private[chiseltest] def ensureFits(signal: SInt, value: BigInt): Unit = {
       signal.widthOption match {
         case Some(0) => // special case: 0-width SInts always represent 0
           ensureInRange(signal, value, 0, 0)
@@ -318,21 +318,21 @@ package object chiseltest {
       }
     }
 
-    private def ensureInRange(signal: Data, value: BigInt, min: BigInt, max: BigInt): Unit = {
+    private[chiseltest] def ensureInRange(signal: Data, value: BigInt, min: BigInt, max: BigInt): Unit = {
       if (value < min || value > max) {
         throw new ChiselException(s"Value $value does not fit into the range of $signal ($min ... $max)")
       }
     }
 
     // helps us work around the fact that signal.width is private!
-    def getFirrtlWidth(signal: Bits): chisel3.internal.firrtl.Width = signal.widthOption match {
+    def getFirrtlWidth(signal: Data): chisel3.internal.firrtl.Width = signal.widthOption match {
       case Some(value) => chisel3.internal.firrtl.KnownWidth(value)
       case None        => chisel3.internal.firrtl.UnknownWidth()
     }
 
-    def boolBitsToString(bits: BigInt): String = (bits != 0).toString
+    private[chiseltest] def boolBitsToString(bits: BigInt): String = (bits != 0).toString
 
-    def enumToString(tpe: EnumType): BigInt => String = {
+    private[chiseltest] def enumToString(tpe: EnumType): BigInt => String = {
       def inner(bits: BigInt): String = {
         val fullName = chisel3.internaltest.EnumHelpers.valueToName(tpe, bits).getOrElse("???")
         // we only want to class and value name, not the package or enclosing class
@@ -413,7 +413,7 @@ package object chiseltest {
       }
     }
 
-    def expectFailed(message: String, userMsg: Option[() => String]): Unit = {
+    private[chiseltest] def expectFailed(message: String, userMsg: Option[() => String]): Unit = {
       val appendMsg = userMsg match {
         case Some(m) => s": ${m()}"
         case _       => ""
