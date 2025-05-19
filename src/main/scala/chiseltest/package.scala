@@ -9,6 +9,7 @@ import chisel3.{
   fromBigIntToLiteral,
   fromBooleanToLiteral,
   fromIntToLiteral,
+  fromIntToWidth,
   Bits,
   Bool,
   ChiselException,
@@ -29,11 +30,99 @@ import chisel3.experimental.VecLiterals._
   */
 package object chiseltest {
 
+  trait Testable[A <: Data] {
+
+    def peek(data:   A): A
+    def poke(data:   A, value: A): Unit
+    def expect(data: A, value: A): Unit
+
+    // TODO: now it means we go through the A representation, should we rather go through the BigInt representation?
+
+    def poke[B](
+      data:  A,
+      value: B
+    )(
+      implicit conv: B => A
+    ): Unit = poke(data, conv(value))
+
+    def peekAs[B](
+      data: A
+    )(
+      implicit conv: A => B
+    ): B = conv(peek(data))
+
+  }
+
+  // Implicit class for extension method syntax
+  implicit class TestableOps[A <: Data](data: A) {
+
+    def peek(
+    )(
+      implicit ev: Testable[A]
+    ): A = ev.peek(data)
+
+    def poke(
+      value: A
+    )(
+      implicit ev: Testable[A]
+    ) = ev.poke(data, value)
+
+    def expect(
+      value: A
+    )(
+      implicit ev: Testable[A]
+    ) = ev.expect(data, value)
+
+    /** Given evidence of a Testable[A], and a conversion from A to B, we can peek the signal of type A as B
+      */
+    def peekAs[B](
+    )(
+      implicit ev: Testable[A],
+      conv:        A => B
+    ): B = ev.peekAs[B](data)
+
+  }
+
+  implicit val testableBool: Testable[Bool] = new Testable[Bool] {
+    def peek(data:   Bool): Bool = Context().backend.peekBits(data).B
+    def poke(data:   Bool, value: Bool): Unit = Utils.pokeBits(data, value.litValue)
+    def expect(data: Bool, value: Bool): Unit = testableBool(data).expectInternal(value.litValue, None)
+  }
+
+  implicit val testableUInt: Testable[UInt] = new Testable[UInt] {
+    def peek(data: UInt): UInt = Context().backend.peekBits(data).U(data.getWidth.W)
+
+    // TODO: ensure fits
+    def poke(data:   UInt, value: UInt): Unit = Utils.pokeBits(data, value.litValue)
+    def expect(data: UInt, value: UInt): Unit = testableUInt(data).expectInternal(value.litValue, None)
+  }
+
+  implicit def testableData[T <: Data]: Testable[T] = new Testable[T] {
+    def peek(data:   T): T = testableData(data).peekInternal()
+    def poke(data:   T, value: T): Unit = testableData(data).pokeInternal(value, allowPartial = false)
+    def expect(data: T, value: T): Unit = testableData(data).expectInternal(value, None, allowPartial = false)
+  }
+
+  // TODO: it could make more sense to define everythinig on top of pokeBits?
+
   /** allows access to chisel Bool type signals with Scala native values */
   implicit class testableBool(x: Bool) {
-    def poke(value: Bool):    Unit = Utils.pokeBits(x, value.litValue)
-    def poke(value: UInt):    Unit = poke(value.litValue)
-    def poke(value: Boolean): Unit = Utils.pokeBits(x, if (value) BigInt(1) else BigInt(0))
+
+    private implicit def bool2Boolean(b: Bool):    Boolean = b.litValue != 0
+    private implicit def Boolean2Bool(b: Boolean): Bool = b.B
+    private implicit def UInt2Bool(b:    UInt):    Bool = b.litValue.B
+
+    def peek() = TestableOps(x).peek()
+    def poke(value:   Bool): Unit = TestableOps(x).poke(value)
+    def expect(value: Bool): Unit = TestableOps(x).expect(value)
+
+    // TODO: this is not even using the one I defined now
+    def peekBoolean(): Boolean = TestableOps(x).peek()
+
+    // TODO: this is not even using the one I defined now
+    def poke(value: UInt): Unit = TestableOps(x).poke(value)
+
+    def poke(value: Boolean): Unit = TestableOps(x).poke(value)
     def poke(value: BigInt): Unit = {
       Utils.ensureFits(x, value)
       Utils.pokeBits(x, value)
@@ -42,7 +131,6 @@ package object chiseltest {
       Utils.ensureFits(x, value)
       Utils.expectBits(x, value, message, Some(Utils.boolBitsToString))
     }
-    def expect(value: Bool): Unit = expectInternal(value.litValue, None)
     def expect(value: Bool, message: => String): Unit = expectInternal(value.litValue, Some(() => message))
     def expect(value: UInt): Unit = expectInternal(value.litValue, None)
     def expect(value: UInt, message: => String): Unit = expectInternal(value.litValue, Some(() => message))
@@ -51,18 +139,16 @@ package object chiseltest {
       expectInternal(if (value) BigInt(1) else BigInt(0), Some(() => message))
     def expect(value: BigInt): Unit = expectInternal(value, None)
     def expect(value: BigInt, message: => String): Unit = expectInternal(value, Some(() => message))
-    def peek(): Bool = Context().backend.peekBits(x) match {
-      case x: BigInt if x == 0 => false.B
-      case x: BigInt if x == 1 => true.B
-      case x => throw new LiteralTypeException(s"peeked Bool with value $x not 0 or 1")
-    }
-    def peekBoolean(): Boolean = Context().backend.peekBits(x) == 1
   }
 
   /** allows access to chisel UInt type signals with Scala native values */
   implicit class testableUInt(x: UInt) {
+
+    def peek() = TestableOps(x).peek()
+    def poke(value:   UInt): Unit = TestableOps(x).poke(value)
+    def expect(value: UInt): Unit = TestableOps(x).expect(value)
+
     private def isZeroWidth = x.widthOption.contains(0)
-    def poke(value: UInt): Unit = poke(value.litValue)
     def poke(value: BigInt): Unit = {
       Utils.ensureFits(x, value)
       if (!isZeroWidth) { // poking a zero width value is a no-op
@@ -75,7 +161,6 @@ package object chiseltest {
         Utils.expectBits(x, value, message, None)
       }
     }
-    def expect(value: UInt): Unit = expectInternal(value.litValue, None)
     def expect(value: UInt, message:   => String): Unit = expectInternal(value.litValue, Some(() => message))
     def expect(value: BigInt): Unit = expectInternal(value, None)
     def expect(value: BigInt, message: => String): Unit = expectInternal(value, Some(() => message))
@@ -83,10 +168,6 @@ package object chiseltest {
     else {
       // zero width UInts always have the value 0
       0
-    }
-    def peek(): UInt = if (!isZeroWidth) { peekInt().asUInt(DataMirror.widthOf(x)) }
-    else {
-      0.U // TODO: change to 0-width constant once supported: https://github.com/chipsalliance/chisel3/pull/2932
     }
   }
 
@@ -168,8 +249,6 @@ package object chiseltest {
   implicit class testableData[T <: Data](x: T) {
     import Utils._
 
-    def poke(value: T): Unit = pokeInternal(value, allowPartial = false)
-
     private def isAllowedNonLitGround(value: T, allowPartial: Boolean, op: String): Boolean = {
       val isGroundType = value match {
         case _: Vec[_] | _: Record => false
@@ -194,8 +273,8 @@ package object chiseltest {
     private[chiseltest] def pokeInternal(value: T, allowPartial: Boolean): Unit = {
       if (isAllowedNonLitGround(value, allowPartial, "poke")) return
       (x, value) match {
-        case (x: Bool, value: Bool) => x.poke(value)
-        case (x: UInt, value: UInt) => x.poke(value)
+        case (x: Bool, value: Bool) => TestableOps(x).poke(value)
+        case (x: UInt, value: UInt) => TestableOps(x).poke(value)
         case (x: SInt, value: SInt) => x.poke(value)
         case (x: Record, value: Record) =>
           require(DataMirror.checkTypeEquivalence(x, value), s"Record type mismatch")
@@ -215,17 +294,17 @@ package object chiseltest {
       }
     }
 
-    def peek(): T = x match {
+    def peekInternal(): T = x match {
       case x: Bool => x.peek().asInstanceOf[T]
       case x: UInt => x.peek().asInstanceOf[T]
       case x: SInt => x.peek().asInstanceOf[T]
       case x: Record =>
         val elementValueFns = x.elements.map { case (name: String, elt: Data) =>
-          (y: Record) => (y.elements(name), elt.peek())
+          (y: Record) => (y.elements(name), elt.peekInternal())
         }.toSeq
         chiselTypeOf(x).Lit(elementValueFns: _*).asInstanceOf[T]
       case x: Vec[_] =>
-        val elementValueFns = x.getElements.map(_.peek())
+        val elementValueFns = x.getElements.map(_.peekInternal())
         Vec.Lit(elementValueFns: _*).asInstanceOf[T]
       case x: EnumType =>
         val bits = Context().backend.peekBits(x)
@@ -263,9 +342,6 @@ package object chiseltest {
         // TODO: aggregate types
       }
     }
-
-    def expect(value: T): Unit = expectInternal(value, None, allowPartial = false)
-    def expect(value: T, message: => String): Unit = expectInternal(value, Some(() => message), allowPartial = false)
 
     /** @return
       *   the single clock that drives the source of this signal.
